@@ -1,5 +1,6 @@
 package com.lch;
 
+import com.lch.model.Certificate;
 import com.lch.model.Student;
 
 import javax.swing.*;
@@ -19,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class StudentManagement extends JFrame {
+    private Student selectedStudent;
     private JTable studentTable;
     private DefaultTableModel tableModel;
     private JButton deleteStudentButton;
@@ -80,9 +82,6 @@ public class StudentManagement extends JFrame {
         editStudentButton = new JButton("Edit Student");
         deleteStudentButton = new JButton("Delete Student");
         JButton viewStudentInfoButton = new JButton("View Student Info");
-        JButton closeWindowButton = createCloseButton();
-        buttonPanel.add(closeWindowButton);
-
         editStudentButton.setEnabled(false);
 
         addStudentButton.addActionListener(new ActionListener() {
@@ -127,6 +126,8 @@ public class StudentManagement extends JFrame {
         buttonPanel.add(viewStudentInfoButton);
         buttonPanel.add(editStudentButton);
         buttonPanel.add(deleteStudentButton);
+        JButton closeWindowButton = createCloseButton();
+        buttonPanel.add(closeWindowButton);
 
         mainPanel.add(tableScrollPane, BorderLayout.CENTER);
         mainPanel.add(buttonPanel, BorderLayout.SOUTH);
@@ -134,7 +135,6 @@ public class StudentManagement extends JFrame {
         add(mainPanel);
         setLocationRelativeTo(null);
     }
-
     private JButton createCloseButton() {
         JButton closeButton = new JButton("Close");
         closeButton.addActionListener(new ActionListener() {
@@ -160,8 +160,206 @@ public class StudentManagement extends JFrame {
         viewPanel.add(new JLabel("Age:"));
         viewPanel.add(ageField);
 
+        JButton certificatesButton = new JButton("Certificates");
+        viewPanel.add(new JLabel("Certificates:"));
+        viewPanel.add(certificatesButton);
+
+        certificatesButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                displayStudentList();
+                openCertificatesForStudent(student);
+            }
+        });
+
         JOptionPane.showConfirmDialog(null, viewPanel, "Student Information", JOptionPane.DEFAULT_OPTION);
     }
+
+    private void openCertificatesForStudent(Student student) {
+        JDialog certificateDialog = new JDialog(this, "Certificates for " + student.getName(), Dialog.ModalityType.APPLICATION_MODAL);
+        certificateDialog.setSize(600, 400);
+        certificateDialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+        JPanel certificatePanel = new JPanel(new BorderLayout());
+
+        String[] columnNames = {"Certificate ID", "Certificate Name", "Description"};
+        DefaultTableModel certificateTableModel = new DefaultTableModel(columnNames, 0);
+        JTable certificateTable = new JTable(certificateTableModel);
+
+        refreshCertificateTable(certificateTableModel, student);
+
+        JScrollPane certificateScrollPane = new JScrollPane(certificateTable);
+        certificatePanel.add(certificateScrollPane, BorderLayout.CENTER);
+
+        JButton addCertificateButton = new JButton("Add Certificate");
+        JButton editCertificateButton = new JButton("Edit Certificate");
+        JButton deleteCertificateButton = new JButton("Delete Certificate");
+        JButton viewCertificateButton = new JButton("View Certificate");
+
+        addCertificateButton.addActionListener(e -> addCertificate(student, certificateTableModel));
+        editCertificateButton.addActionListener(e -> editCertificate(certificateTable, certificateTableModel));
+        deleteCertificateButton.addActionListener(e -> deleteCertificate(certificateTable, certificateTableModel));
+        viewCertificateButton.addActionListener(e -> viewCertificate(certificateTable));
+
+        JPanel buttonPanel = new JPanel();
+        buttonPanel.add(addCertificateButton);
+        buttonPanel.add(editCertificateButton);
+        buttonPanel.add(deleteCertificateButton);
+        buttonPanel.add(viewCertificateButton);
+
+        certificatePanel.add(buttonPanel, BorderLayout.SOUTH);
+
+        certificateDialog.add(certificatePanel);
+        certificateDialog.setLocationRelativeTo(null);
+        certificateDialog.setVisible(true);
+    }
+
+    private void refreshCertificateTable(DefaultTableModel model, Student student) {
+        model.setRowCount(0);
+        List<Certificate> certificates = retrieveCertificatesForStudent(student);
+
+        for (Certificate certificate : certificates) {
+            Object[] rowData = {certificate.getId(), certificate.getCertificateName(), certificate.getDescription()};
+            model.addRow(rowData);
+        }
+    }
+
+    private List<Certificate> retrieveCertificatesForStudent(Student student) {
+        List<Certificate> certificateList = new ArrayList<>();
+        try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
+            String query = "SELECT * FROM certificates WHERE student_id = ?";
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
+                statement.setInt(1, student.getId());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        int certificateId = resultSet.getInt("id");
+                        String certificateName = resultSet.getString("certificate_name");
+                        String description = resultSet.getString("description");
+                        certificateList.add(new Certificate(certificateId, certificateName, description));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return certificateList;
+    }
+
+    private void addCertificate(Student student, DefaultTableModel model) {
+        String certificateName = JOptionPane.showInputDialog(this, "Enter Certificate Name:");
+        if (certificateName != null && !certificateName.trim().isEmpty()) {
+            String description = JOptionPane.showInputDialog(this, "Enter Description:");
+            if (description != null && !description.trim().isEmpty()) {
+                try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
+                    String query = "INSERT INTO certificates (student_id, certificate_name, description) VALUES (?, ?, ?)";
+                    try (PreparedStatement statement = connection.prepareStatement(query)) {
+                        statement.setInt(1, student.getId());
+                        statement.setString(2, certificateName);
+                        statement.setString(3, description);
+                        int rowsInserted = statement.executeUpdate();
+                        if (rowsInserted > 0) {
+                            JOptionPane.showMessageDialog(this, "Certificate added successfully");
+                            refreshCertificateTable(model, student);
+                        } else {
+                            JOptionPane.showMessageDialog(this, "Failed to add certificate");
+                        }
+                    }
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                JOptionPane.showMessageDialog(this, "Description cannot be empty");
+            }
+        } else {
+            JOptionPane.showMessageDialog(this, "Certificate name cannot be empty");
+        }
+    }
+
+    private void editCertificate(JTable certificateTable, DefaultTableModel model) {
+        int selectedRow = certificateTable.getSelectedRow();
+        if (selectedRow != -1) {
+            int certificateId = (int) model.getValueAt(selectedRow, 0);
+            String certificateName = JOptionPane.showInputDialog(this, "Edit Certificate Name:", model.getValueAt(selectedRow, 1));
+            if (certificateName != null && !certificateName.trim().isEmpty()) {
+                String description = JOptionPane.showInputDialog(this, "Edit Description:", model.getValueAt(selectedRow, 2));
+                if (description != null && !description.trim().isEmpty()) {
+                    try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
+                        String query = "UPDATE certificates SET certificate_name = ?, description = ? WHERE id = ?";
+                        try (PreparedStatement statement = connection.prepareStatement(query)) {
+                            statement.setString(1, certificateName);
+                            statement.setString(2, description);
+                            statement.setInt(3, certificateId);
+                            int rowsUpdated = statement.executeUpdate();
+                            if (rowsUpdated > 0) {
+                                JOptionPane.showMessageDialog(this, "Certificate updated successfully");
+                                refreshCertificateTable(model, getSelectedStudent());
+                            } else {
+                                JOptionPane.showMessageDialog(this, "Failed to update certificate");
+                            }
+                        }
+                    } catch (SQLException e) {
+                        e.printStackTrace();
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(this, "Description cannot be empty");
+                }
+            } else {
+                JOptionPane.showMessageDialog(this, "Certificate name cannot be empty");
+            }
+        } else {
+            JOptionPane.showMessageDialog(this, "Select a certificate to edit");
+        }
+    }
+
+    private void deleteCertificate(JTable certificateTable, DefaultTableModel model) {
+        int selectedRow = certificateTable.getSelectedRow();
+        if (selectedRow != -1) {
+            int certificateId = (int) model.getValueAt(selectedRow, 0);
+            int confirm = JOptionPane.showConfirmDialog(this, "Are you sure you want to delete this certificate?", "Confirmation", JOptionPane.YES_NO_OPTION);
+            if (confirm == JOptionPane.YES_OPTION) {
+                try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
+                    String query = "DELETE FROM certificates WHERE id = ?";
+                    try (PreparedStatement statement = connection.prepareStatement(query)) {
+                        statement.setInt(1, certificateId);
+                        int rowsDeleted = statement.executeUpdate();
+                        if (rowsDeleted > 0) {
+                            JOptionPane.showMessageDialog(this, "Certificate deleted successfully");
+                            refreshCertificateTable(model, getSelectedStudent());
+                        } else {
+                            JOptionPane.showMessageDialog(this, "Failed to delete certificate");
+                        }
+                    }
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            }
+        } else {
+            JOptionPane.showMessageDialog(this, "Select a certificate to delete");
+        }
+    }
+
+    private Student getSelectedStudent() {
+        int selectedRowIndex = studentTable.getSelectedRow();
+        if (selectedRowIndex != -1) {
+            return getStudentFromTable(selectedRowIndex);
+        }
+        return null;
+    }
+
+    private void viewCertificate(JTable certificateTable) {
+        int selectedRow = certificateTable.getSelectedRow();
+        if (selectedRow != -1) {
+            int certificateId = (int) certificateTable.getValueAt(selectedRow, 0);
+            String certificateName = (String) certificateTable.getValueAt(selectedRow, 1);
+            String description = (String) certificateTable.getValueAt(selectedRow, 2);
+            JOptionPane.showMessageDialog(this, "Certificate ID: " + certificateId
+                    + "\nCertificate Name: " + certificateName
+                    + "\nDescription: " + description);
+        } else {
+            JOptionPane.showMessageDialog(this, "Select a certificate to view");
+        }
+    }
+
 
     // Helper method to create non-editable text fields
     private JTextField createNonEditableTextField(String text) {
@@ -342,11 +540,9 @@ public class StudentManagement extends JFrame {
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                new StudentManagement().setVisible(true);
-            }
+        SwingUtilities.invokeLater(() -> {
+            StudentManagement studentManagement = new StudentManagement();
+            studentManagement.setVisible(true);
         });
     }
 }
