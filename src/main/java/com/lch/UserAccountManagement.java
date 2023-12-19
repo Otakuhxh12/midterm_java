@@ -84,6 +84,15 @@ public class UserAccountManagement extends JFrame {
         editUserButton = new JButton("Edit User"); // Make it a class variable
         deleteUserButton = new JButton("Delete User");
         JButton viewUserInfoButton = new JButton("View User Info");
+        JButton manageStudentsButton = new JButton("Manage Students");
+
+        manageStudentsButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                openStudentManagement();
+            }
+        });
+        buttonPanel.add(manageStudentsButton);
 
         // Disable the "Edit User" button initially
         editUserButton.setEnabled(false);
@@ -159,6 +168,11 @@ public class UserAccountManagement extends JFrame {
 
     private Connection establishConnection() throws SQLException {
         return DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD);
+    }
+
+    private void openStudentManagement() {
+        StudentManagement studentManagement = new StudentManagement();
+        studentManagement.setVisible(true);
     }
 
     private void addUserToDatabase(User user) {
