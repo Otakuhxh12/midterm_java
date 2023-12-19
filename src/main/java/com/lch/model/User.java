@@ -1,23 +1,29 @@
 package com.lch.model;
 
 public class User {
-
+    private int id;
     private String name;
     private int age;
     private String phoneNumber;
     private String status;
 
-    public User() {
-    }
-
-    public User(String name, int age, String phoneNumber, String status) {
+    public User(int id, String name, int age, String phoneNumber, String status) {
+        this.id = id;
         this.name = name;
         this.age = age;
         this.phoneNumber = phoneNumber;
         this.status = status;
     }
 
-    // Getters and Setters
+    // Getter and setter methods for each field...
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
+    }
 
     public String getName() {
         return name;
@@ -54,7 +60,8 @@ public class User {
     @Override
     public String toString() {
         return "User{" +
-                "name='" + name + '\'' +
+                "id=" + id +
+                ", name='" + name + '\'' +
                 ", age=" + age +
                 ", phoneNumber='" + phoneNumber + '\'' +
                 ", status='" + status + '\'' +
