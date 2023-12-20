@@ -1,15 +1,24 @@
 package com.lch;
 
-import com.lch.model.Certificate;
 import com.lch.model.Student;
+import com.opencsv.CSVReader;
+import com.opencsv.CSVWriter;
+import com.opencsv.exceptions.CsvException;
 
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableModel;
+import javax.swing.table.TableColumn;
+import javax.swing.table.TableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.io.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -20,7 +29,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class StudentManagement extends JFrame {
-    private Student selectedStudent;
     private JTable studentTable;
     private DefaultTableModel tableModel;
     private JButton deleteStudentButton;
@@ -29,8 +37,10 @@ public class StudentManagement extends JFrame {
     private static final String JDBC_URL = "jdbc:mysql://localhost/midterm_javaswing?useSSL=false";
     private static final String USERNAME = "root";
     private static final String PASSWORD = "";
+    private String userRole;
 
-    public StudentManagement() {
+    public StudentManagement(String userRole) {
+        this.userRole = userRole;
         initializeUI();
         createStudentsTableIfNotExists();
         displayStudentList();
@@ -41,7 +51,8 @@ public class StudentManagement extends JFrame {
             String createTableQuery = "CREATE TABLE IF NOT EXISTS students ("
                     + "id INT AUTO_INCREMENT PRIMARY KEY,"
                     + "name VARCHAR(255) NOT NULL,"
-                    + "age INT NOT NULL)";
+                    + "age INT NOT NULL,"
+                    + "email VARCHAR(255) NOT NULL)";
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate(createTableQuery);
             }
@@ -54,18 +65,87 @@ public class StudentManagement extends JFrame {
         setTitle("Student Management");
         setSize(600, 400);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        JButton importStudentsButton = new JButton("Import Students");
 
         JPanel mainPanel = new JPanel(new BorderLayout());
+        JTextField searchField = new JTextField("Enter Name or Email or Age");
+        JButton searchButton = new JButton("Search");
+        searchField.setForeground(Color.GRAY);
+        searchField.setPreferredSize(new Dimension(200, 25));
 
-        String[] columnNames = {"Student Id", "Name", "Age"};
+        // Add focus listener to remove the text when the user clicks on the field
+        searchField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                if (searchField.getText().equals("Enter Name or Email or Age")) {
+                    searchField.setText("");
+                    searchField.setForeground(Color.BLACK);
+                }
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+
+            }
+        });
+
+        importStudentsButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                importStudentsFromCSV();
+            }
+        });
+
+        JButton exportStudentsButton = new JButton("Export Students");
+
+        exportStudentsButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                exportStudentsToCSV();
+            }
+        });
+
+        String[] columnNames = {"Student id", "Name", "Age", "Email"};
         tableModel = new DefaultTableModel(columnNames, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
             }
         };
+
+        JPanel searchPanel = new JPanel(new FlowLayout());
+        searchPanel.add(new JLabel("Search:"));
+        searchPanel.add(searchField);
+        searchPanel.add(searchButton);
+
+        searchButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String searchText = searchField.getText();
+                if (!searchText.isEmpty()) {
+                    filterStudentList(searchText);
+                } else {
+                    displayStudentList(); // If search field is empty, display all students
+                }
+            }
+        });
+
+
+
         studentTable = new JTable(tableModel);
         studentTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        TableRowSorter<TableModel> sorter = new TableRowSorter<>(studentTable.getModel());
+        studentTable.setRowSorter(sorter);
+
+        // Add a selection listener to handle sorting when column headers are clicked
+        studentTable.getTableHeader().addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                int colIndex = studentTable.columnAtPoint(evt.getPoint());
+                toggleSortOrder(colIndex);
+            }
+        });
 
         studentTable.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
             @Override
@@ -75,6 +155,13 @@ public class StudentManagement extends JFrame {
             }
         });
 
+        int studentIdColumnIndex = 0;
+        TableColumn studentIdColumn = studentTable.getColumnModel().getColumn(studentIdColumnIndex);
+        studentIdColumn.setMinWidth(0);
+        studentIdColumn.setMaxWidth(0);
+        studentIdColumn.setPreferredWidth(0);
+        studentIdColumn.setResizable(false);
+
         JScrollPane tableScrollPane = new JScrollPane(studentTable);
 
         JPanel buttonPanel = new JPanel(new FlowLayout());
@@ -82,6 +169,7 @@ public class StudentManagement extends JFrame {
         editStudentButton = new JButton("Edit Student");
         deleteStudentButton = new JButton("Delete Student");
         JButton viewStudentInfoButton = new JButton("View Student Info");
+
         editStudentButton.setEnabled(false);
 
         addStudentButton.addActionListener(new ActionListener() {
@@ -114,44 +202,198 @@ public class StudentManagement extends JFrame {
                 int selectedRowIndex = studentTable.getSelectedRow();
                 if (selectedRowIndex != -1) {
                     Student selectedStudent = getStudentFromTable(selectedRowIndex);
-                    showStudentInfo(selectedStudent);
+
+                    StudentDetail studentDetailFrame = new StudentDetail(selectedStudent, userRole);
+                    studentDetailFrame.setVisible(true);
                 } else {
                     JOptionPane.showMessageDialog(StudentManagement.this, "Select a student to view.");
                 }
             }
         });
 
-
-        buttonPanel.add(addStudentButton);
         buttonPanel.add(viewStudentInfoButton);
-        buttonPanel.add(editStudentButton);
-        buttonPanel.add(deleteStudentButton);
-        JButton closeWindowButton = createCloseButton();
-        buttonPanel.add(closeWindowButton);
 
+        if ("admin".equals(userRole) || "manager".equals(userRole)) {
+            buttonPanel.add(addStudentButton);
+            buttonPanel.add(editStudentButton);
+            buttonPanel.add(deleteStudentButton);
+            buttonPanel.add(importStudentsButton);
+            buttonPanel.add(exportStudentsButton);
+        }
+
+
+        mainPanel.add(searchPanel, BorderLayout.NORTH);
         mainPanel.add(tableScrollPane, BorderLayout.CENTER);
         mainPanel.add(buttonPanel, BorderLayout.SOUTH);
-
         add(mainPanel);
         setLocationRelativeTo(null);
     }
-    private JButton createCloseButton() {
-        JButton closeButton = new JButton("Close");
-        closeButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                // Close the current JFrame (StudentManagement window)
-                dispose();
-            }
-        });
-        return closeButton;
+
+    private void toggleSortOrder(int columnIndex) {
+
+        TableRowSorter<TableModel> sorter = (TableRowSorter<TableModel>) studentTable.getRowSorter();
+        List<RowSorter.SortKey> sortKeys = new ArrayList<>(sorter.getSortKeys());
+
+        // Check if the clicked column is already the primary sorted column
+        boolean isPrimarySortColumn = sortKeys.size() > 0 && sortKeys.get(0).getColumn() == columnIndex;
+
+        if (isPrimarySortColumn) {
+            // Toggle the order of the primary sort column
+            sortKeys.set(0, new RowSorter.SortKey(columnIndex, toggleSortOrder(sortKeys.get(0).getSortOrder())));
+        } else {
+            // Add a new primary sort key for the clicked column
+            sortKeys.clear();
+            sortKeys.add(new RowSorter.SortKey(columnIndex, SortOrder.ASCENDING));
+        }
+
+        sorter.setSortKeys(sortKeys);
+
     }
+
+    private SortOrder toggleSortOrder(SortOrder currentSortOrder) {
+        // Toggle the sorting order
+        return (currentSortOrder == SortOrder.ASCENDING) ? SortOrder.DESCENDING : SortOrder.ASCENDING;
+    }
+
+    private void exportStudentsToCSV() {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Choose location to save CSV file");
+        fileChooser.setFileFilter(new FileNameExtensionFilter("CSV files (*.csv)", "csv"));
+
+        int userSelection = fileChooser.showSaveDialog(this);
+
+        if (userSelection == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = fileChooser.getSelectedFile();
+            String filePath = selectedFile.getAbsolutePath();
+
+            // Ensure the file has a .csv extension
+            if (!filePath.toLowerCase().endsWith(".csv")) {
+                selectedFile = new File(filePath + ".csv");
+            }
+
+            // Call a method to write the student data to the CSV file
+            writeStudentsToCSV(selectedFile);
+        }
+    }
+
+    private void writeStudentsToCSV(File csvFile) {
+        try (Writer writer = new FileWriter(csvFile);
+             CSVWriter csvWriter = new CSVWriter(writer,
+                     CSVWriter.DEFAULT_SEPARATOR,
+                     CSVWriter.NO_QUOTE_CHARACTER,
+                     CSVWriter.NO_ESCAPE_CHARACTER,
+                     CSVWriter.DEFAULT_LINE_END)) {
+
+            // Write custom CSV header
+            String[] header = {"Name", "Age", "Email"};
+            csvWriter.writeNext(header);
+
+            // Write student data to CSV
+            List<Student> studentListData = retrieveStudentListFromDatabase();
+            for (Student student : studentListData) {
+                String[] rowData = {
+                        student.getName(),
+                        String.valueOf(student.getAge()),
+                        student.getEmail()
+                };
+                csvWriter.writeNext(rowData);
+            }
+
+            JOptionPane.showMessageDialog(this, "Students exported to CSV file successfully.");
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Error exporting students to CSV file.");
+        }
+    }
+
+    private void importStudentsFromCSV() {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select CSV File");
+        fileChooser.setFileFilter(new FileNameExtensionFilter("CSV files (*.csv)", "csv"));
+
+        int userSelection = fileChooser.showOpenDialog(this);
+
+        if (userSelection == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = fileChooser.getSelectedFile();
+            System.out.println("Selected file: " + selectedFile.getAbsolutePath());
+
+            // Call a method to read and import data from the CSV file
+            importStudentsFromCSVFile(selectedFile);
+        }
+    }
+
+    private void importStudentsFromCSVFile(File csvFile) {
+        try (Reader reader = new FileReader(csvFile);
+             CSVReader csvReader = new CSVReader(reader)) {
+
+            List<String[]> csvData = csvReader.readAll();
+
+            boolean skipHeader = true;
+
+
+            for (String[] row : csvData) {
+                if (skipHeader) {
+                    skipHeader = false;
+                    continue; // Skip the header row
+                }
+
+                if (row.length == 3) {
+                    String name = row[0].trim();
+                    int age = Integer.parseInt(row[1].trim());
+                    String email = row[2].trim();
+
+                    // Create a new Student object
+                    Student newStudent = new Student(0, name, age, email);
+
+                    // Add the student to the database
+                    addStudentToDatabase(newStudent);
+                } else {
+                    // Handle invalid row format (not enough columns)
+                    System.out.println("Invalid row format in CSV file.");
+                }
+            }
+
+            // Refresh the displayed student list after importing
+            displayStudentList();
+
+        } catch (IOException | CsvException | NumberFormatException e) {
+            e.printStackTrace();
+            JOptionPane.showMessageDialog(this, "Error importing students from CSV file.");
+        }
+    }
+
+    private void filterStudentList(String searchText) {
+        List<Student> filteredList = new ArrayList<>();
+        for (Student student : retrieveStudentListFromDatabase()) {
+            if (containsIgnoreCase(student.getName(), searchText) ||
+                    String.valueOf(student.getAge()).contains(searchText) ||
+                    containsIgnoreCase(student.getEmail(), searchText)) {
+                filteredList.add(student);
+            }
+        }
+        displayFilteredStudentList(filteredList);
+    }
+
+    private boolean containsIgnoreCase(String source, String target) {
+        return source.toLowerCase().contains(target.toLowerCase());
+    }
+
+
+    private void displayFilteredStudentList(List<Student> filteredList) {
+        tableModel.setRowCount(0);
+        for (Student student : filteredList) {
+            addStudentToTable(student);
+        }
+    }
+
     private void showStudentInfo(Student student) {
-        JPanel viewPanel = new JPanel(new GridLayout(4, 2));
+        JPanel viewPanel = new JPanel(new GridLayout(5, 2));
 
         JTextField idField = createNonEditableTextField(String.valueOf(student.getId()));
         JTextField nameField = createNonEditableTextField(student.getName());
         JTextField ageField = createNonEditableTextField(String.valueOf(student.getAge()));
+        JTextField emailField = createNonEditableTextField(student.getEmail());
 
         viewPanel.add(new JLabel("Student ID:"));
         viewPanel.add(idField);
@@ -159,207 +401,11 @@ public class StudentManagement extends JFrame {
         viewPanel.add(nameField);
         viewPanel.add(new JLabel("Age:"));
         viewPanel.add(ageField);
-
-        JButton certificatesButton = new JButton("Certificates");
-        viewPanel.add(new JLabel("Certificates:"));
-        viewPanel.add(certificatesButton);
-
-        certificatesButton.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                displayStudentList();
-                openCertificatesForStudent(student);
-            }
-        });
+        viewPanel.add(new JLabel("Email:"));
+        viewPanel.add(emailField);
 
         JOptionPane.showConfirmDialog(null, viewPanel, "Student Information", JOptionPane.DEFAULT_OPTION);
     }
-
-    private void openCertificatesForStudent(Student student) {
-        JDialog certificateDialog = new JDialog(this, "Certificates for " + student.getName(), Dialog.ModalityType.APPLICATION_MODAL);
-        certificateDialog.setSize(600, 400);
-        certificateDialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-
-        JPanel certificatePanel = new JPanel(new BorderLayout());
-
-        String[] columnNames = {"Certificate ID", "Certificate Name", "Description"};
-        DefaultTableModel certificateTableModel = new DefaultTableModel(columnNames, 0);
-        JTable certificateTable = new JTable(certificateTableModel);
-
-        refreshCertificateTable(certificateTableModel, student);
-
-        JScrollPane certificateScrollPane = new JScrollPane(certificateTable);
-        certificatePanel.add(certificateScrollPane, BorderLayout.CENTER);
-
-        JButton addCertificateButton = new JButton("Add Certificate");
-        JButton editCertificateButton = new JButton("Edit Certificate");
-        JButton deleteCertificateButton = new JButton("Delete Certificate");
-        JButton viewCertificateButton = new JButton("View Certificate");
-
-        addCertificateButton.addActionListener(e -> addCertificate(student, certificateTableModel));
-        editCertificateButton.addActionListener(e -> editCertificate(certificateTable, certificateTableModel));
-        deleteCertificateButton.addActionListener(e -> deleteCertificate(certificateTable, certificateTableModel));
-        viewCertificateButton.addActionListener(e -> viewCertificate(certificateTable));
-
-        JPanel buttonPanel = new JPanel();
-        buttonPanel.add(addCertificateButton);
-        buttonPanel.add(editCertificateButton);
-        buttonPanel.add(deleteCertificateButton);
-        buttonPanel.add(viewCertificateButton);
-
-        certificatePanel.add(buttonPanel, BorderLayout.SOUTH);
-
-        certificateDialog.add(certificatePanel);
-        certificateDialog.setLocationRelativeTo(null);
-        certificateDialog.setVisible(true);
-    }
-
-    private void refreshCertificateTable(DefaultTableModel model, Student student) {
-        model.setRowCount(0);
-        List<Certificate> certificates = retrieveCertificatesForStudent(student);
-
-        for (Certificate certificate : certificates) {
-            Object[] rowData = {certificate.getId(), certificate.getCertificateName(), certificate.getDescription()};
-            model.addRow(rowData);
-        }
-    }
-
-    private List<Certificate> retrieveCertificatesForStudent(Student student) {
-        List<Certificate> certificateList = new ArrayList<>();
-        try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-            String query = "SELECT * FROM certificates WHERE student_id = ?";
-            try (PreparedStatement statement = connection.prepareStatement(query)) {
-                statement.setInt(1, student.getId());
-                try (ResultSet resultSet = statement.executeQuery()) {
-                    while (resultSet.next()) {
-                        int certificateId = resultSet.getInt("id");
-                        String certificateName = resultSet.getString("certificate_name");
-                        String description = resultSet.getString("description");
-                        certificateList.add(new Certificate(certificateId, certificateName, description));
-                    }
-                }
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        return certificateList;
-    }
-
-    private void addCertificate(Student student, DefaultTableModel model) {
-        String certificateName = JOptionPane.showInputDialog(this, "Enter Certificate Name:");
-        if (certificateName != null && !certificateName.trim().isEmpty()) {
-            String description = JOptionPane.showInputDialog(this, "Enter Description:");
-            if (description != null && !description.trim().isEmpty()) {
-                try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-                    String query = "INSERT INTO certificates (student_id, certificate_name, description) VALUES (?, ?, ?)";
-                    try (PreparedStatement statement = connection.prepareStatement(query)) {
-                        statement.setInt(1, student.getId());
-                        statement.setString(2, certificateName);
-                        statement.setString(3, description);
-                        int rowsInserted = statement.executeUpdate();
-                        if (rowsInserted > 0) {
-                            JOptionPane.showMessageDialog(this, "Certificate added successfully");
-                            refreshCertificateTable(model, student);
-                        } else {
-                            JOptionPane.showMessageDialog(this, "Failed to add certificate");
-                        }
-                    }
-                } catch (SQLException e) {
-                    e.printStackTrace();
-                }
-            } else {
-                JOptionPane.showMessageDialog(this, "Description cannot be empty");
-            }
-        } else {
-            JOptionPane.showMessageDialog(this, "Certificate name cannot be empty");
-        }
-    }
-
-    private void editCertificate(JTable certificateTable, DefaultTableModel model) {
-        int selectedRow = certificateTable.getSelectedRow();
-        if (selectedRow != -1) {
-            int certificateId = (int) model.getValueAt(selectedRow, 0);
-            String certificateName = JOptionPane.showInputDialog(this, "Edit Certificate Name:", model.getValueAt(selectedRow, 1));
-            if (certificateName != null && !certificateName.trim().isEmpty()) {
-                String description = JOptionPane.showInputDialog(this, "Edit Description:", model.getValueAt(selectedRow, 2));
-                if (description != null && !description.trim().isEmpty()) {
-                    try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-                        String query = "UPDATE certificates SET certificate_name = ?, description = ? WHERE id = ?";
-                        try (PreparedStatement statement = connection.prepareStatement(query)) {
-                            statement.setString(1, certificateName);
-                            statement.setString(2, description);
-                            statement.setInt(3, certificateId);
-                            int rowsUpdated = statement.executeUpdate();
-                            if (rowsUpdated > 0) {
-                                JOptionPane.showMessageDialog(this, "Certificate updated successfully");
-                                refreshCertificateTable(model, getSelectedStudent());
-                            } else {
-                                JOptionPane.showMessageDialog(this, "Failed to update certificate");
-                            }
-                        }
-                    } catch (SQLException e) {
-                        e.printStackTrace();
-                    }
-                } else {
-                    JOptionPane.showMessageDialog(this, "Description cannot be empty");
-                }
-            } else {
-                JOptionPane.showMessageDialog(this, "Certificate name cannot be empty");
-            }
-        } else {
-            JOptionPane.showMessageDialog(this, "Select a certificate to edit");
-        }
-    }
-
-    private void deleteCertificate(JTable certificateTable, DefaultTableModel model) {
-        int selectedRow = certificateTable.getSelectedRow();
-        if (selectedRow != -1) {
-            int certificateId = (int) model.getValueAt(selectedRow, 0);
-            int confirm = JOptionPane.showConfirmDialog(this, "Are you sure you want to delete this certificate?", "Confirmation", JOptionPane.YES_NO_OPTION);
-            if (confirm == JOptionPane.YES_OPTION) {
-                try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-                    String query = "DELETE FROM certificates WHERE id = ?";
-                    try (PreparedStatement statement = connection.prepareStatement(query)) {
-                        statement.setInt(1, certificateId);
-                        int rowsDeleted = statement.executeUpdate();
-                        if (rowsDeleted > 0) {
-                            JOptionPane.showMessageDialog(this, "Certificate deleted successfully");
-                            refreshCertificateTable(model, getSelectedStudent());
-                        } else {
-                            JOptionPane.showMessageDialog(this, "Failed to delete certificate");
-                        }
-                    }
-                } catch (SQLException e) {
-                    e.printStackTrace();
-                }
-            }
-        } else {
-            JOptionPane.showMessageDialog(this, "Select a certificate to delete");
-        }
-    }
-
-    private Student getSelectedStudent() {
-        int selectedRowIndex = studentTable.getSelectedRow();
-        if (selectedRowIndex != -1) {
-            return getStudentFromTable(selectedRowIndex);
-        }
-        return null;
-    }
-
-    private void viewCertificate(JTable certificateTable) {
-        int selectedRow = certificateTable.getSelectedRow();
-        if (selectedRow != -1) {
-            int certificateId = (int) certificateTable.getValueAt(selectedRow, 0);
-            String certificateName = (String) certificateTable.getValueAt(selectedRow, 1);
-            String description = (String) certificateTable.getValueAt(selectedRow, 2);
-            JOptionPane.showMessageDialog(this, "Certificate ID: " + certificateId
-                    + "\nCertificate Name: " + certificateName
-                    + "\nDescription: " + description);
-        } else {
-            JOptionPane.showMessageDialog(this, "Select a certificate to view");
-        }
-    }
-
 
     // Helper method to create non-editable text fields
     private JTextField createNonEditableTextField(String text) {
@@ -372,19 +418,23 @@ public class StudentManagement extends JFrame {
     private Student showStudentInputDialog() {
         JTextField nameField = new JTextField();
         JTextField ageField = new JTextField();
+        JTextField emailField = new JTextField();
 
-        JPanel panel = new JPanel(new GridLayout(3, 2));
+        JPanel panel = new JPanel(new GridLayout(4, 2));
         panel.add(new JLabel("Name:"));
         panel.add(nameField);
         panel.add(new JLabel("Age:"));
         panel.add(ageField);
+        panel.add(new JLabel("Email:"));
+        panel.add(emailField);
 
         int result = JOptionPane.showConfirmDialog(null, panel, "Add New Student", JOptionPane.OK_CANCEL_OPTION);
         if (result == JOptionPane.OK_OPTION) {
             try {
                 String name = nameField.getText();
                 int age = Integer.parseInt(ageField.getText());
-                return new Student(0, name, age);
+                String email = emailField.getText();
+                return new Student(0, name, age, email);
             } catch (NumberFormatException e) {
                 JOptionPane.showMessageDialog(StudentManagement.this, "Invalid input for age.");
             }
@@ -394,10 +444,11 @@ public class StudentManagement extends JFrame {
 
     private void addStudentToDatabase(Student student) {
         try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-            String query = "INSERT INTO students (name, age) VALUES (?, ?)";
+            String query = "INSERT INTO students (name, age, email) VALUES (?, ?, ?)";
             try (PreparedStatement statement = connection.prepareStatement(query, Statement.RETURN_GENERATED_KEYS)) {
                 statement.setString(1, student.getName());
                 statement.setInt(2, student.getAge());
+                statement.setString(3, student.getEmail());
                 statement.executeUpdate();
 
                 try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
@@ -424,7 +475,8 @@ public class StudentManagement extends JFrame {
                     int id = resultSet.getInt("id");
                     String name = resultSet.getString("name");
                     int age = resultSet.getInt("age");
-                    studentList.add(new Student(id, name, age));
+                    String email = resultSet.getString("email");
+                    studentList.add(new Student(id, name, age, email));
                 }
             }
         } catch (SQLException e) {
@@ -457,9 +509,14 @@ public class StudentManagement extends JFrame {
     private void deleteSelectedStudent() {
         int selectedRowIndex = studentTable.getSelectedRow();
         if (selectedRowIndex != -1) {
-            Student selectedStudent = getStudentFromTable(selectedRowIndex);
-            deleteSelectedStudentFromDatabase(selectedStudent);
-            tableModel.removeRow(selectedRowIndex);
+            int dialogResult = JOptionPane.showConfirmDialog(this,
+                    "Are you sure you want to delete this student?",
+                    "Confirm Deletion", JOptionPane.YES_NO_OPTION);
+            if (dialogResult == JOptionPane.YES_OPTION) {
+                Student selectedStudent = getStudentFromTable(selectedRowIndex);
+                deleteSelectedStudentFromDatabase(selectedStudent);
+                tableModel.removeRow(selectedRowIndex);
+            }
         } else {
             JOptionPane.showMessageDialog(this, "Select a student to delete.");
         }
@@ -467,11 +524,13 @@ public class StudentManagement extends JFrame {
 
     private void editSelectedStudentInDatabase(Student student) {
         try (Connection connection = DriverManager.getConnection(JDBC_URL, USERNAME, PASSWORD)) {
-            String queryUpdate = "UPDATE students SET name = ?, age = ? WHERE id = ?";
+            String queryUpdate = "UPDATE students SET name = ?, age = ?, email = ? WHERE id = ?";
             try (PreparedStatement updateStatement = connection.prepareStatement(queryUpdate)) {
                 updateStatement.setString(1, student.getName());
                 updateStatement.setInt(2, student.getAge());
-                updateStatement.setInt(3, student.getId());
+                updateStatement.setString(3, student.getEmail());
+                updateStatement.setInt(4, student.getId());
+
                 int rowsUpdated = updateStatement.executeUpdate();
                 System.out.println("Rows Updated in Database: " + rowsUpdated);
             }
@@ -486,7 +545,10 @@ public class StudentManagement extends JFrame {
             Student selectedStudent = getStudentFromTable(selectedRowIndex);
             Student editedStudent = showEditStudentInputDialog(selectedStudent);
             if (editedStudent != null) {
+                // Update student in the table
                 updateStudentInTable(selectedRowIndex, editedStudent);
+
+                // Update student in the database
                 editSelectedStudentInDatabase(editedStudent);
             }
         } else {
@@ -498,51 +560,47 @@ public class StudentManagement extends JFrame {
         tableModel.setValueAt(student.getId(), rowIndex, 0);
         tableModel.setValueAt(student.getName(), rowIndex, 1);
         tableModel.setValueAt(student.getAge(), rowIndex, 2);
+        tableModel.setValueAt(student.getEmail(), rowIndex, 3);
     }
 
     private Student showEditStudentInputDialog(Student student) {
-        JTextField idField = new JTextField(String.valueOf(student.getId()));
         JTextField nameField = new JTextField(student.getName());
         JTextField ageField = new JTextField(String.valueOf(student.getAge()));
+        JTextField emailField = new JTextField(student.getEmail());
 
-        JPanel panel = new JPanel(new GridLayout(5, 2));
-        panel.add(new JLabel("ID:"));
-        panel.add(idField);
+        JPanel panel = new JPanel(new GridLayout(4, 2));
         panel.add(new JLabel("Name:"));
         panel.add(nameField);
         panel.add(new JLabel("Age:"));
         panel.add(ageField);
+        panel.add(new JLabel("Email:"));
+        panel.add(emailField);
 
         int result = JOptionPane.showConfirmDialog(null, panel, "Edit Student Information", JOptionPane.OK_CANCEL_OPTION);
         if (result == JOptionPane.OK_OPTION) {
             try {
-                int id = Integer.parseInt(idField.getText());
                 String name = nameField.getText();
                 int age = Integer.parseInt(ageField.getText());
-                return new Student(id, name, age);
+                String email = emailField.getText();
+                return new Student(student.getId(), name, age, email);
             } catch (NumberFormatException e) {
-                JOptionPane.showMessageDialog(this, "Invalid input for ID or age.");
+                JOptionPane.showMessageDialog(this, "Invalid input for age.");
             }
         }
         return null;
     }
 
     private void addStudentToTable(Student newStudent) {
-        Object[] rowData = {newStudent.getId(), newStudent.getName(), newStudent.getAge()};
+        Object[] rowData = {newStudent.getId(), newStudent.getName(), newStudent.getAge(), newStudent.getEmail()};
         tableModel.addRow(rowData);
     }
 
     private Student getStudentFromTable(int rowIndex) {
-        int id = (int) tableModel.getValueAt(rowIndex, 0);
-        String name = (String) tableModel.getValueAt(rowIndex, 1);
-        int age = (int) tableModel.getValueAt(rowIndex, 2);
-        return new Student(id, name, age);
-    }
-
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            StudentManagement studentManagement = new StudentManagement();
-            studentManagement.setVisible(true);
-        });
+        int modelRowIndex = studentTable.convertRowIndexToModel(rowIndex);
+        int id = (int) tableModel.getValueAt(modelRowIndex, 0);
+        String name = (String) tableModel.getValueAt(modelRowIndex, 1);
+        int age = (int) tableModel.getValueAt(modelRowIndex, 2);
+        String email = (String) tableModel.getValueAt(modelRowIndex, 3);
+        return new Student(id, name, age, email);
     }
 }
